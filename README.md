@@ -69,20 +69,33 @@ Never commit `.env`, `.env.local`, production env files, DuckDNS tokens, or GitH
 
 ## Controls and rules
 
-- Reactor: rotate five couplers to the displayed solution key.
-- Oxygen: cycle pressure valves to their randomized target bars.
-- Navigation: plot a route through a randomized, validated asteroid field; collisions damage the hull and reset the ship.
-- Core sync: stabilize three nodes within the phase window; Systems Analysts can hold all three, other roles up to two.
-- Hull: seal three leaks; each patch restores hull integrity.
-- Launch: enter the glyph sequence, ignite engines, and activate escape.
+- Every run gets a persisted seed and a deterministic, non-repeating mission queue. Normal runs contain five selected repair missions plus Emergency Launch; Hard contains six, and Nightmare contains seven. The daily seed is derived from the UTC date, so players starting the Daily Challenge on that date receive the same queue and puzzle layouts.
+- Reactor Stabilization: rotate the randomized couplers (4/6/8 by difficulty) to match the circuit key.
+- Oxygen Restoration: cycle pressure valves to their randomized target bars.
+- Navigation Override: plot a route through the validated asteroid field; collisions damage the hull and reset the ship.
+- Core Synchronization: stabilize three nodes within the phase window; one player can claim two nodes, while a Systems Analyst can hold all three.
+- Hull Breach: split up and seal the three leaking sections.
+- Coolant Purge: route the three coolant junctions in sequence; wrong ports vent reactor pressure.
+- Signal Decryption: submit distributed private cipher fragments. Crew members can transmit their assigned clue on the shared crew comms feed with **Share Clue With Crew**.
+- Shield Calibration: synchronize the four pulse nodes before the timing window closes.
+- Power Grid Reroute: spend shared energy cells to restore the oxygen, shield, and comms relays.
+- Repair Drone: the diagnostic and repair stations receive different private information; cooperate to identify the fault and complete the service order.
+- Data Core Recovery: restore the archive key from player-specific fragments.
+- Emergency Launch: enter the authorization glyphs, ignite engines, then activate escape.
 
-Role specialties affect play: Engineers improve reactor stability, Navigators add moves, Systems Analysts can hold the full sync array, Medics restore oxygen while tuning valves, Pilots add engine power, and Security restores extra hull per patch.
+Crew Comms is a room-only live text channel available in the briefing room and on mission screens. It shows sender and local time, supports the existing quick transmissions, keeps the newest 80 entries per room, rejects empty or oversized text, and limits each connected crew member to eight chat messages per ten seconds. Reconnects receive the existing recent history; a new match and rematch start with a fresh channel. Text is rendered as text, and sender names are resolved by the server from the connected player session.
+
+The captain chooses Normal, Hard, Nightmare, or the UTC Daily Challenge before launch. Difficulty changes mission count and countdown (8/7/6 minutes), and scales puzzle dimensions, move budgets, valve levels, coordination windows, mistake limits, starting energy, and emergency timing and penalties. Normal uses 4 reactor couplers, 3 valves, 5 navigation hazards, and a 3-glyph launch code; Nightmare uses 8 couplers, 5 valves, 11 hazards, and a 5-glyph launch code. Routes are built around a guaranteed safe navigation path, circuit move budgets include a valid solution, and other sequences/targets are generated from the replayable run seed. The server validates all answers. Shared energy, repair materials, oxygen canisters, and ship systems are server-owned. Optional supply-pod emergencies award reserves when two distinct crew members respond before the deadline; other emergencies apply their listed, recoverable penalty only once.
+
+Role abilities have server-enforced 60-second cooldowns and resource or mission requirements: Engineers spend materials to stabilize the reactor, Navigators add a navigation move or restore an energy cell during grid rerouting, Systems Analysts scan signal/data tasks, Medics spend an oxygen canister to restore atmosphere, Pilots spend an energy cell to boost power, and Security spends a material to repair hull. Crew clues are sent only to the assigned player's room snapshot until that player explicitly shares them on the in-game crew comms feed.
+
+Results show the run seed, selected challenge, contributions, MVP, rating, and actual event narrative. The captain can copy the seed, start a normal rematch with a fresh run, or replay the same seed and puzzle layout. Personal bests and achievement badges are stored in the local browser only; this release has no global leaderboard or account service.
 
 The server validates actions and deadlines. Rooms are collision-checked, inputs bounded, and actions rate-limited. A browser session can reconnect with its saved player ID and room code; captaincy migrates if the host disconnects. Disk snapshots preserve room state and the shared deadline through server restarts.
 
 ## Tests and manual check
 
-`npm test` covers room creation/joining, two/six player lobbies, readiness, randomized puzzle solvability, all mission outcomes, invalid/stale actions, deadline enforcement, defeat/victory, rematch reset, reconnects, captain migration, snapshots, and server restart. `npm run build` checks the production client; provide `VITE_SERVER_URL=https://...` when running it.
+`npm test` covers room creation/joining, two/six player lobbies, readiness, deterministic mission selection, all twelve mission types, puzzle solvability, server action checks, difficulty and Daily Challenge settings, ability cooldowns, emergency responses, deadline enforcement, defeat/victory, rematch reset, reconnects, captain migration, snapshots, and server restart. Its live Socket.IO integration starts two independent clients and solves the generated mission queue through the final launch. `npm run build` checks the production client; provide `VITE_SERVER_URL=https://...` when running it.
 
 After deployment, open the Vercel URL in two separate browser profiles/devices. Create/join a room, ready both players, launch, verify that both clients see state changes, refresh one client, disconnect the captain, finish or lose the match, and use Rematch/Return to Lobby. Verify `https://YOUR_API_HOST/health` returns `{"ok":true,...}` and confirm the Socket.IO connection is secure in browser developer tools.
 
@@ -90,5 +103,5 @@ After deployment, open the Vercel URL in two separate browser profiles/devices. 
 
 - Room coordination is in one Node process and snapshots use one JSON file. This is suitable for one always-on backend VM, not multiple scaled instances.
 - Room membership is session-based, not account-based. Reclaim requires the saved browser player ID and room code.
-- Audio is omitted; warnings and feedback are visual.
+- Audio is omitted; alarms and feedback use visual warnings, motion, and event text. The UI does not expose a nonfunctional sound control.
 - The GitHub, Vercel, DNS, Oracle, and TLS resources are not created by this project workspace. Do not treat it as publicly deployed until the verification steps succeed.

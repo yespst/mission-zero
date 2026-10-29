@@ -15,7 +15,7 @@ test('Mission 6 controls are not inside the full-screen launch countdown overlay
   assert.ok(missionRules.every(rule => !rule.includes('position:fixed') && !rule.includes('pointer-events:none')));
   assert.match(css, /\.launch-countdown-overlay\{[^}]*pointer-events:none/);
   assert.match(jsx, /aria-label=\{`Enter \$\{glyphNames\[v-1\]\} glyph`\}/);
-  assert.match(jsx, /disabled=\{busy\|\|m\.entered\.length!==3\} onClick=\{\(\)=>action\(\{type:'engines'\}\)\}/);
+  assert.match(jsx, /disabled=\{busy\|\|m\.entered\.length!==m\.sequence\.length\} onClick=\{\(\)=>action\(\{type:'engines'\}\)\}/);
 });
 
 test('crew status badges occupy a dedicated responsive grid area and long labels truncate', () => {
