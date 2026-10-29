@@ -1,0 +1,22 @@
+[Unit]
+Description=MISSION ZERO Socket.IO backend
+After=network.target
+
+[Service]
+Type=simple
+User=missionzero
+Group=missionzero
+WorkingDirectory=/opt/mission-zero
+EnvironmentFile=/etc/mission-zero/mission-zero.env
+ExecStart=/usr/bin/node /opt/mission-zero/server/index.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/mission-zero
+
+[Install]
+WantedBy=multi-user.target

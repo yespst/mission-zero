@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: mission-zero
+    runtime: node
+    plan: starter
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    disk:
+      name: mission-zero-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0
+      - key: CLIENT_ORIGIN
+        value: https://mission-zero.onrender.com
+      - key: DATA_DIR
+        value: /var/data
+      - key: ROOM_TTL_MINUTES
+        value: "30"
