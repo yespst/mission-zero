@@ -40,23 +40,39 @@ export function createRoom(host, now = Date.now()) {
 
 export function addPlayer(room, player, now = Date.now()) {
   if (room.phase === 'playing') throw Error('This room is already in a mission.');
-  if (room.players.length >= 6) throw Error('Crew capacity reached (6).');
+  if (room.players.filter(p => p.connected).length >= 6) throw Error('Crew capacity reached (6).');
   if (room.players.some(p => p.id === player.id)) throw Error('That crew member is already in this room.');
+  // Offline sessions remain available for reconnects, but must not occupy a
+  // crew berth forever. Evict the oldest offline session only when the roster
+  // is full and a new connected player is taking that berth.
+  if (room.players.length >= 6) {
+    const oldestOffline = room.players.filter(p => !p.connected).sort((a,b) => a.joinedAt - b.joinedAt)[0];
+    if (!oldestOffline) throw Error('Crew capacity reached (6).');
+    room.players = room.players.filter(p => p.id !== oldestOffline.id);
+    if (room.hostId === oldestOffline.id) room.hostId = room.players.find(p => p.connected)?.id || null;
+  }
   const role = ROLE_NAMES.find(candidate => !room.players.some(p => p.role === candidate));
   room.players.push({ ...player, role, ready: false, connected: true, contribution: 0, joinedAt: now });
   room.updatedAt = now;
 }
 
 export function setReady(room, playerId, ready) {
-  const p = room.players.find(x => x.id === playerId);
+  const p = room.players.find(x => x.id === playerId && x.connected);
   if (!p || room.phase !== 'lobby') throw Error('Ready status cannot be changed now.');
-  p.ready = !!ready;
+  if (typeof ready !== 'boolean') throw Error('Ready status must be true or false.');
+  p.ready = ready;
   room.updatedAt = Date.now();
+}
+
+export function canStartMatch(room) {
+  const connected = room.players.filter(p => p.connected);
+  return room.phase === 'lobby' && connected.length >= 2 &&
+    connected.some(p => p.id === room.hostId) && connected.every(p => p.ready);
 }
 
 export function startMatch(room, hostId, now = Date.now()) {
   if (room.hostId !== hostId) throw Error('Only the captain can launch.');
-  if (room.phase !== 'lobby' || room.players.length < 2 || !room.players.every(p => p.ready && p.connected)) throw Error('Two connected, ready crew members are required.');
+  if (!canStartMatch(room)) throw Error('At least two connected crew members must be ready before launch.');
   room.phase = 'playing'; room.startedAt = now; room.endAt = now + 8 * 60 * 1000; room.updatedAt = now; room.missionIndex = 0; room.mission = makeMission(MISSION_ORDER[0], room.players);
   room.events.push({ type: 'launch', at: now, text: 'CRITICAL SYSTEM FAILURE. REACTOR MELTDOWN IN 08:00. CREW ACTION REQUIRED.' });
 }
@@ -85,8 +101,6 @@ export function tickRoom(room, now = Date.now()) {
   // Crew must stabilize the atmosphere and ship power before reserves collapse.
   room.systems.oxygen = clamp(room.systems.oxygen - 0.22, 0, 100);
   room.systems.power = clamp(room.systems.power - 0.025, 0, 100);
-  room.systems.oxygen = clamp(room.systems.oxygen - 0.22, 0, 100);
-  room.systems.power = clamp(room.systems.power - 0.025, 0, 100);
   if (room.systems.oxygen <= 0 || room.systems.hull <= 0 || room.systems.reactor <= 0 || now >= room.endAt) {
     room.phase = 'defeat'; room.result = makeResult(room, now, false); room.events.push({ type: 'defeat', at: now, text: 'SHIP LOST — CREW EVACUATION FAILED.' }); return true;
   }
@@ -99,7 +113,7 @@ export function applyAction(room, playerId, action, now = Date.now()) {
   const player = room.players.find(p => p.id === playerId && p.connected);
   if (!player) throw Error('Crew member is not connected to this room.');
   const m = room.mission;
-  let success = false;
+  let success = false, feedback = null;
   if (m.kind === 'reactor' && action.type === 'rotate' && Number.isInteger(action.index) && action.index >= 0 && action.index < 5) {
     m.tiles[action.index] = (m.tiles[action.index] + 1) % 4; success = m.tiles.every((v,i) => v === m.target[i]);
     if (player.role === 'Engineer') room.systems.reactor = clamp(room.systems.reactor + 0.5,0,100);
@@ -125,17 +139,18 @@ export function applyAction(room, playerId, action, now = Date.now()) {
     m.sealed.push(action.section); room.systems.hull = clamp(room.systems.hull + (player.role==='Security'?12:8),0,100); success = m.sealed.length === 3;
   } else if (m.kind === 'launch') {
     if (action.type === 'launchCode' && !m.engines) {
+      if (m.entered.length >= 3) throw Error('Authorization sequence complete. Ignite the engines.');
       const i = m.entered.length;
       if (action.value !== m.sequence[i]) { m.entered = []; room.systems.power = clamp(room.systems.power - 10,0,100); throw Error('Incorrect glyph. Sequence reset; power -10%.'); }
-      m.entered.push(action.value);
-    } else if (action.type === 'engines' && m.entered.length === 3) { m.engines = true; room.systems.power = clamp(room.systems.power + (player.role==='Pilot'?20:15),0,100); }
-    else if (action.type === 'escape' && m.engines) success = true;
+      m.entered.push(action.value); feedback = `Glyph ${m.entered.length} of 3 accepted.`;
+    } else if (action.type === 'engines' && m.entered.length === 3) { m.engines = true; room.systems.power = clamp(room.systems.power + (player.role==='Pilot'?20:15),0,100); feedback = 'Engines ignited. Escape protocol ready.'; }
+    else if (action.type === 'escape' && m.engines) { success = true; feedback = 'Escape protocol accepted.'; }
     else throw Error('Complete the launch sequence before that action.');
   } else throw Error('Invalid action for this mission.');
   player.contribution++;
   if (success) finishMission(room, now);
   room.updatedAt = now;
-  return { success, completed: room.phase === 'victory' || room.mission?.done };
+  return { success, completed: room.phase === 'victory' || room.mission?.done, feedback };
 }
 
 export function makeResultSnapshot(room) { return room.result; }
