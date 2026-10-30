@@ -87,6 +87,21 @@ test('crew chat is room-private, live in lobby and gameplay, bounded, validated,
  }finally{a?.disconnect();b?.disconnect();c?.disconnect();restored?.disconnect();await stopServer(child);await rm(dataDir,{recursive:true,force:true});}
 });
 
+test('public live room directory contains only safe room data and spectators do not join crew slots',{timeout:15000},async()=>{
+ const port=await freePort(),dataDir=await mkdtemp(path.join(tmpdir(),'mission-zero-directory-'));let child,host,crew,watcher;
+ try{
+  child=await startServer(port,dataDir);const url=`http://127.0.0.1:${port}`;host=await connect(url);crew=await connect(url);watcher=await connect(url);
+  const created=await request(host,'create',{name:'Nova',playerId:'directory-host-uuid-1111'});await request(crew,'join',{name:'Vega',playerId:'directory-crew-uuid-2222',code:created.code});
+  let directory=await request(watcher,'list-rooms');assert.equal(directory.rooms.length,1);assert.deepEqual(directory.rooms[0],{code:created.code,host:'Nova',players:2,difficulty:'normal',phase:'lobby'});assert.deepEqual(directory.stats,{missionTypes:12,difficultyModes:3,liveRooms:1,crewOnline:2});
+  await request(host,'ready',{ready:true});await request(crew,'ready',{ready:true});await request(host,'start',{seed:41001});
+  directory=await request(watcher,'list-rooms');assert.equal(directory.rooms[0].phase,'playing');
+  const watched=await request(watcher,'watch-room',{code:created.code});assert.equal(watched.state.code,created.code);assert.equal(watched.state.players.filter(player=>player.connected).length,2,'watching does not occupy a crew slot');assert.equal(watched.state.hostId,null);assert.ok(watched.state.players.every(player=>!('id'in player)),'spectator snapshots omit persistent player session IDs');assert.ok(watched.state.chatHistory.every(message=>!('senderId'in message)),'spectator snapshots omit chat identity tokens');
+  await assert.rejects(request(watcher,'chat',{text:'spectator chat'}),/Crew chat is unavailable/);
+  await assert.rejects(request(watcher,'action',{type:'engines',missionId:watched.state.mission.id}),/not in this room|connected|crew|player/i);
+  await request(watcher,'leave');
+ }finally{host?.disconnect();crew?.disconnect();watcher?.disconnect();await stopServer(child);await rm(dataDir,{recursive:true,force:true});}
+});
+
 test('production CORS allows only the exact configured HTTPS frontend origin',{timeout:10000},async()=>{
  const port=Number(process.env.MISSION_ZERO_TEST_PORT)||await freePort(),dataDir=await mkdtemp(path.join(tmpdir(),'mission-zero-cors-'));let child;
  try{

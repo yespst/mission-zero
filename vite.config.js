@@ -5,6 +5,7 @@ import { loadEnv } from 'vite';
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const serverUrl = env.VITE_SERVER_URL?.trim();
+  const devServerUrl = env.VITE_DEV_SERVER_URL?.trim() || 'http://127.0.0.1:3001';
   if (mode === 'production') {
     if (!serverUrl) throw new Error('VITE_SERVER_URL must be set to the HTTPS Socket.IO backend before a production build.');
     let backend;
@@ -15,7 +16,7 @@ export default defineConfig(({ mode }) => {
   }
   return {
     plugins: [react()],
-    server: { proxy: { '/socket.io': { target: 'http://127.0.0.1:3001', ws: true } } },
+    server: { proxy: { '/socket.io': { target: devServerUrl, ws: true } } },
     build: { outDir: 'dist' }
   };
 });

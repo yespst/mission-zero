@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 import { z } from 'zod';
-import { addPlayer, applyAction, canStartMatch, createRoom, setReady, startMatch, tickRoom, resetMatch, MISSION_META, MISSION_ORDER, ROLE_ABILITIES, setDifficulty, setChallenge, useAbility } from './game.js';
+import { addPlayer, applyAction, canStartMatch, createRoom, setReady, startMatch, tickRoom, resetMatch, DIFFICULTY, MISSION_META, MISSION_ORDER, MISSION_TYPES, ROLE_ABILITIES, setDifficulty, setChallenge, useAbility } from './game.js';
 import { appendChat, appendSystemChat, checkChatRate, cleanChatText } from './chat.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -51,18 +51,20 @@ function validatePlayerId(value) {
   if (!/^[A-Za-z0-9_-]{8,64}$/.test(id)) throw Error('Player session is invalid. Refresh and try again.');
   return id;
 }
-function publicRoom(room, viewerId = null) {
+function publicRoom(room, viewerId = null, spectator = false) {
   const mission = room.mission && { ...room.mission };
   if(mission?.kind==='signal'||mission?.kind==='datacore'){mission.fragmentCount=mission.sequence?.length||0;mission.privateClue=mission.clues?.[viewerId]||[];delete mission.clues;delete mission.sequence;}
   if(mission?.kind==='drone'){mission.stepCount=mission.repairOrder?.length||0;mission.privateClue=viewerId===mission.diagnosticOwner?{station:'diagnostic',fault:mission.fault}:viewerId===mission.repairOwner?{station:'repair',order:mission.repairOrder}:null;delete mission.fault;delete mission.repairOrder;}
   // Player-specific snapshots keep cooperative clues private while the server
   // remains authoritative for every answer and state transition.
-  const players = room.players.map(({id,name,role,ready,connected,contribution,abilityUsedAt}) => ({id,name,role,ability:ROLE_ABILITIES[role],ready,connected,contribution,abilityReadyAt:abilityUsedAt?abilityUsedAt+60000:null}));
+  const players = room.players.map(({id,name,role,ready,connected,contribution,abilityUsedAt}) => ({...(spectator?{}:{id}),name,role,ability:ROLE_ABILITIES[role],ready,connected,contribution,abilityReadyAt:abilityUsedAt?abilityUsedAt+60000:null}));
   players.sort((a,b) => Number(b.connected)-Number(a.connected));
-  return { code: room.code, hostId: room.hostId, phase: room.phase, players, connectedCount: players.filter(p=>p.connected).length, canStart: canStartMatch(room), missionIndex: room.missionIndex, missionQueue:room.missionQueue,runSeed:room.runSeed,replaySeed:room.replaySeed,difficulty:room.difficulty,challenge:room.challenge, mission, missionMeta: room.mission && MISSION_META[room.mission.kind], systems: room.systems,resources:room.resources,activeEmergency:room.activeEmergency,endAt: room.endAt, startedAt: room.startedAt, completed: room.completed, events: room.events.slice(-10),chatHistory:(room.chat||[]).slice(-80),coordination: room.coordination, result: room.result };
+  const activeEmergency = spectator && room.activeEmergency ? {...room.activeEmergency,responses:undefined,responsesCount:room.activeEmergency.responses?.length||0} : room.activeEmergency;
+  const chatHistory = (room.chat||[]).slice(-80).map(({senderId,...message})=>spectator?message:{senderId,...message});
+  return { code: room.code, hostId: spectator?null:room.hostId, phase: room.phase, players, connectedCount: players.filter(p=>p.connected).length, canStart: spectator?false:canStartMatch(room), missionIndex: room.missionIndex, missionQueue:room.missionQueue,runSeed:room.runSeed,replaySeed:room.replaySeed,difficulty:room.difficulty,challenge:room.challenge, mission, missionMeta: room.mission && MISSION_META[room.mission.kind], systems: room.systems,resources:room.resources,activeEmergency,endAt: room.endAt, startedAt: room.startedAt, completed: room.completed, events: room.events.slice(-10),chatHistory,coordination: room.coordination, result: spectator?null:room.result };
 }
-function snapshot(code, viewerId=null) { const room = rooms.get(code); return room ? publicRoom(room,viewerId) : null; }
-function broadcast(room, save = true) { for(const socketId of roomSockets.get(room.code)||[]){const s=io.sockets.sockets.get(socketId);if(s)s.emit('state',snapshot(room.code,s.data.playerId));} if (save) persist(); }
+function snapshot(code, viewerId=null, spectator=false) { const room = rooms.get(code); return room ? publicRoom(room,viewerId,spectator) : null; }
+function broadcast(room, save = true) { for(const socketId of roomSockets.get(room.code)||[]){const s=io.sockets.sockets.get(socketId);if(s)s.emit('state',snapshot(room.code,s.data.playerId,s.data.spectator));} if (save) persist(); }
 function getRoom(code) { const room = rooms.get(codeOf(code)); if (!room) throw Error('Room not found. Check the code and try again.'); return room; }
 const lastActions = new Map();
 function rateLimit(socket) {
@@ -73,12 +75,32 @@ function rateLimit(socket) {
 }
 function ack(fn) { return async (...args) => { const reply = typeof args.at(-1)==='function' ? args.pop() : () => {}; try { reply({ ok: true, ...(await fn(...args)) }); } catch (e) { reply({ ok: false, error: e.message || 'Request failed.' }); } }; }
 function joinSocket(socket, room, playerId) {
-  socket.join(room.code); socket.data.room = room.code; socket.data.playerId = playerId;
+  socket.join(room.code); socket.data.room = room.code; socket.data.playerId = playerId; socket.data.spectator = playerId === null;
   let set = roomSockets.get(room.code); if (!set) roomSockets.set(room.code, set = new Set()); set.add(socket.id);
 }
 function assertNoRoom(socket){if(socket.data.room)throw Error('Leave your current room before joining another crew.');}
 
 io.on('connection', socket => {
+  socket.on('list-rooms', ack(async () => {
+    const publicRooms = [...rooms.values()]
+      .filter(room => ['lobby','playing'].includes(room.phase) && room.players.some(player => player.connected))
+      .map(room => ({
+        code: room.code,
+        host: room.players.find(player => player.id === room.hostId)?.name || 'Crew captain',
+        players: room.players.filter(player => player.connected).length,
+        difficulty: room.challenge === 'daily' ? 'daily' : room.difficulty,
+        phase: room.phase
+      }));
+    return { rooms: publicRooms, stats: { missionTypes: MISSION_TYPES.length, difficultyModes: Object.keys(DIFFICULTY).length, liveRooms: publicRooms.length, crewOnline: publicRooms.reduce((total, room) => total + room.players, 0) } };
+  }));
+  socket.on('watch-room', ack(async ({ code }) => {
+    rateLimit(socket); assertNoRoom(socket);
+    code = codeOf(code);
+    const room = getRoom(code);
+    if (room.phase !== 'playing') throw Error('This crew is no longer in a live mission.');
+    joinSocket(socket, room, null);
+    return { state: snapshot(code, null, true), code };
+  }));
   socket.on('create', ack(async ({ name, playerId }) => {
     rateLimit(socket);assertNoRoom(socket); name = clean(name); playerId = validatePlayerId(playerId);
     if (name.length < 2) throw Error('Choose a nickname with at least 2 characters.');
@@ -125,7 +147,7 @@ io.on('connection', socket => {
   socket.on('replay-seed',ack(async()=>{rateLimit(socket);const room=getRoom(socket.data.room);if(room.hostId!==socket.data.playerId)throw Error('Only the captain can replay this run.');if(!room.result||!Number.isSafeInteger(room.result.seed))throw Error('This run has no replayable seed.');const seed=room.result.seed;resetMatch(room,socket.data.playerId,true);room.replaySeed=seed;broadcast(room);return {state:snapshot(room.code,socket.data.playerId)};}));
   socket.on('return-lobby', ack(async () => { rateLimit(socket); const room = getRoom(socket.data.room); resetMatch(room,socket.data.playerId,false);appendSystemChat(room,'Crew returned to the briefing room. A new run can begin when everyone is ready.'); broadcast(room); return {}; }));
   socket.on('leave', ack(async () => { rateLimit(socket); const room = getRoom(socket.data.room);const leaver=room.players.find(p=>p.id===socket.data.playerId); removePlayer(room,socket.data.playerId);if(leaver&&room.players.length)appendSystemChat(room,`${leaver.name} left the room.`);const sockets=roomSockets.get(room.code);sockets?.delete(socket.id);if(sockets?.size===0)roomSockets.delete(room.code);socket.leave(room.code); socket.data.room=null; socket.data.playerId=null; broadcast(room); return {}; }));
-  socket.on('disconnect', () => { lastActions.delete(socket.id); const code=socket.data.room, id=socket.data.playerId; if (!code || !id) return; const set=roomSockets.get(code); set?.delete(socket.id); if (set?.size===0) roomSockets.delete(code); const room=rooms.get(code); if (!room) return; const still=io.sockets.sockets; const other=[...still.values()].some(s=>s.data.room===code&&s.data.playerId===id); if (!other) { const p=room.players.find(x=>x.id===id); if (p) {p.connected=false;appendSystemChat(room,`${p.name} disconnected · reconnect window open.`);} if (room.hostId===id) room.hostId=room.players.find(p=>p.connected)?.id || null; if (room.phase==='playing') room.systems.oxygen=Math.max(0,room.systems.oxygen-1); room.updatedAt=Date.now(); broadcast(room); } });
+  socket.on('disconnect', () => { lastActions.delete(socket.id); const code=socket.data.room, id=socket.data.playerId; if (!code) return; const set=roomSockets.get(code); set?.delete(socket.id); if (set?.size===0) roomSockets.delete(code); if (!id) return; const room=rooms.get(code); if (!room) return; const still=io.sockets.sockets; const other=[...still.values()].some(s=>s.data.room===code&&s.data.playerId===id); if (!other) { const p=room.players.find(x=>x.id===id); if (p) {p.connected=false;appendSystemChat(room,`${p.name} disconnected · reconnect window open.`);} if (room.hostId===id) room.hostId=room.players.find(p=>p.connected)?.id || null; if (room.phase==='playing') room.systems.oxygen=Math.max(0,room.systems.oxygen-1); room.updatedAt=Date.now(); broadcast(room); } });
 });
 function removePlayer(room,id) { room.players=room.players.filter(p=>p.id!==id);delete room.chatRate?.[id]; if(room.hostId===id) room.hostId=room.players.find(p=>p.connected)?.id||null; room.updatedAt=Date.now(); if(!room.players.length) rooms.delete(room.code); }
 

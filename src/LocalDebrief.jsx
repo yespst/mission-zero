@@ -7,9 +7,12 @@ export default function LocalDebrief({result,playerId}) {
     const key='mz-local-records-v1';let records={};
     try{records=JSON.parse(localStorage.getItem(key)||'{}')||{};}catch{}
     const runKey=`${result.challenge||'standard'}-${result.seed}-${result.startedAt}`;
+    const badges=[];if(result.victory)badges.push('CREW EXTRACTED');if(result.missions>=6)badges.push('SYSTEMS RESTORED');if((result.contributions?.[playerId]||0)>=8)badges.push('HIGH CONTRIBUTOR');if(result.challenge==='daily'&&result.victory)badges.push('DAILY SURVIVOR');
     if(!records.runs?.includes(runKey)){
       const runs=[...(records.runs||[]),runKey].slice(-100);
-      records={...records,runs,totalRuns:(records.totalRuns||0)+1,victories:(records.victories||0)+(result.victory?1:0),bestWinSeconds:result.victory?Math.min(records.bestWinSeconds||Infinity,result.survivalSeconds):records.bestWinSeconds||null,bestContributions:Math.max(records.bestContributions||0,result.contributions?.[playerId]||0)};
+      const recentResults=[...(records.recentResults||[]),{victory:!!result.victory,missions:Number(result.missions)||0,difficulty:result.difficulty||'normal',at:Date.now()}].slice(-5);
+      const missionsKnown=Number.isFinite(records.totalMissionsCompleted)||!records.totalRuns;
+      records={...records,runs,totalRuns:(records.totalRuns||0)+1,victories:(records.victories||0)+(result.victory?1:0),totalMissionsCompleted:missionsKnown?(Number(records.totalMissionsCompleted)||0)+(Number(result.missions)||0):null,recentResults,achievements:[...new Set([...(records.achievements||[]),...badges])],bestWinSeconds:result.victory?Math.min(records.bestWinSeconds||Infinity,result.survivalSeconds):records.bestWinSeconds||null,bestContributions:Math.max(records.bestContributions||0,result.contributions?.[playerId]||0)};
       localStorage.setItem(key,JSON.stringify(records));
     }
     setRecord(records);
